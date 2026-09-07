@@ -1,0 +1,10 @@
+{
+  "name": "paparazzi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "sharp": "^0.34.2"
+  }
+}

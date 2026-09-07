@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Captured screenshots — real competitor-app content, never belongs in the repo
+library/
+
+# Runtime logs and local state
+*.log
+.launchd.out.log
+.launchd.err.log
+.reconcile.lock
+
+# macOS
+.DS_Store
+
+# Android build output (source is tracked, build artifacts are not)
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+android/*.iml
+android/.idea/

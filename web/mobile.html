@@ -1,0 +1,374 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Paparazzi</title>
+<style>
+  :root { color-scheme: light dark;
+    --bg:#fff; --fg:#14161a; --dim:#6b7280; --line:#e5e7eb; --accent:#0b5fff;
+    --ok:#059669; --warn:#b45309; --bad:#dc2626; --card:#fafbfc; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0e1116; --fg:#f3f4f6; --dim:#9aa3af; --line:#242a35; --accent:#4c8dff;
+            --ok:#34d399; --warn:#fbbf24; --bad:#f87171; --card:#151a21; }
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    padding: max(18px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom)); }
+  header { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:2px; }
+  h1 { font-size:19px; margin:0; letter-spacing:-.01em; }
+  .count { font-size:13px; color:var(--dim); font-variant-numeric:tabular-nums; }
+  p.sub { margin:0 0 14px; color:var(--dim); font-size:13px; }
+
+  .hubrow { display:flex; gap:6px; margin-bottom:12px; }
+  .hubrow select { flex:1; min-width:0; padding:9px 10px; border:1px solid var(--line); border-radius:10px;
+    background:var(--card); color:inherit; font:inherit; font-size:14px; }
+  .hubrow button { padding:9px 12px; border:1px solid var(--line); border-radius:10px;
+    background:transparent; color:inherit; font:inherit; font-size:14px; cursor:pointer; flex:none; }
+
+  .hubform { border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:12px; background:var(--card); }
+  .hubform input { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:9px;
+    background:transparent; color:inherit; font:inherit; font-size:14px; margin-bottom:8px; }
+  .hubform .row { display:flex; gap:8px; }
+  .hubform button { flex:1; padding:9px; border:1px solid var(--line); border-radius:9px;
+    background:transparent; color:inherit; font:inherit; font-size:13px; cursor:pointer; }
+  .hubform button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  .hubform button.danger { color:var(--bad); border-color:var(--bad); }
+
+  label.pick { display:flex; align-items:center; justify-content:center; gap:8px; height:112px;
+    border:2px dashed var(--line); border-radius:16px; font-weight:600; font-size:17px;
+    cursor:pointer; background:var(--card); }
+  label.pick:active { border-color:var(--accent); color:var(--accent); }
+  input[type=file] { position:absolute; width:1px; height:1px; opacity:0; }
+  .fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+  .fields input { width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:10px;
+    background:transparent; color:inherit; font:inherit; font-size:14px; }
+  .fields input:focus { outline:none; border-color:var(--accent); }
+
+  .watcher { border:1px solid var(--line); border-radius:16px; padding:14px; margin-top:16px; background:var(--card); }
+  .watcher .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .watcher .label { font-weight:600; }
+  .watcher .sub { font-size:12px; color:var(--dim); margin-top:2px; }
+  .wbtn { padding:9px 18px; border:none; border-radius:20px; font:inherit; font-weight:600;
+          cursor:pointer; color:#fff; }
+  .wbtn.start { background:var(--accent); }
+  .wbtn.stop { background:var(--bad); }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--dim); display:inline-block; margin-right:6px; }
+  .dot.on { background:var(--ok); animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  ul { list-style:none; margin:18px 0 0; padding:0; }
+  li { display:flex; align-items:center; gap:11px; padding:9px 0; border-top:1px solid var(--line); font-size:14px; }
+  li img { width:38px; height:38px; object-fit:cover; border-radius:7px; background:var(--line); flex:none; }
+  li .n { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  li .s { font-size:12px; font-variant-numeric:tabular-nums; color:var(--dim); flex:none; text-align:right; }
+  li.done .s { color:var(--ok); } li.dup .s { color:var(--warn); } li.fail .s { color:var(--bad); }
+  footer { margin-top:22px; color:var(--dim); font-size:12px; line-height:1.6; }
+  code { font-size:11px; background:var(--card); padding:1px 5px; border-radius:5px; }
+</style>
+
+<header>
+  <h1>Paparazzi</h1>
+  <span class="count" id="count">…</span>
+</header>
+<p class="sub">Pick screenshots — they appear in Figma within seconds.</p>
+
+<div class="hubrow">
+  <select id="hubSelect"></select>
+  <button id="hubEdit" title="Edit this hub">Edit</button>
+  <button id="hubAdd" title="Add a hub">+ Hub</button>
+</div>
+
+<div class="hubform" id="hubForm" hidden>
+  <input id="hubName" placeholder="Name, e.g. Fano's laptop" spellcheck="false">
+  <input id="hubUrl" placeholder="http://10.15.39.66:8899" spellcheck="false" autocapitalize="off" autocorrect="off">
+  <div class="row">
+    <button id="hubSave" class="primary">Save</button>
+    <button id="hubCancel">Cancel</button>
+    <button id="hubDelete" class="danger" hidden>Delete</button>
+  </div>
+</div>
+
+<label class="pick">
+  <span>+ Choose screenshots</span>
+  <input type="file" id="f" accept="image/*" multiple>
+</label>
+
+<div class="fields">
+  <input id="collection" placeholder="folder, e.g. competitors/Agoda" spellcheck="false">
+  <input id="tags" placeholder="tags, comma separated" spellcheck="false">
+</div>
+
+<div class="watcher">
+  <div class="row">
+    <div>
+      <div class="label"><span class="dot" id="wdot"></span><span id="wstate">Auto-capture off</span></div>
+      <div class="sub" id="wsub">Take screenshots the normal way — they'll be picked up automatically.</div>
+    </div>
+    <button class="wbtn start" id="wbtn">Start</button>
+  </div>
+</div>
+
+<ul id="log"></ul>
+<footer id="foot">
+  Pick which laptop's hub to send to above — it's remembered on this phone.<br>
+  Folder and tags are remembered too, and applied to everything you send.<br>
+  Add this page to your home screen for one-tap access.
+</footer>
+
+<script>
+const el = (id) => document.getElementById(id);
+
+// --- Hub selection ---------------------------------------------------------
+// A phone can reach several laptops' hubs on the same network; this remembers
+// each one by name and which is active, so switching is a dropdown, not retyping a URL.
+const HUBS_KEY = 'pap.hubs';
+const ACTIVE_KEY = 'pap.activeHubId';
+
+function loadHubs() {
+  let hubs;
+  try { hubs = JSON.parse(localStorage.getItem(HUBS_KEY) || 'null'); } catch { hubs = null; }
+  // A QR scanned from the Figma plugin carries the machine's own name, so a fresh visit gets a
+  // recognisable label instead of a generic one — useful once a phone has scanned several laptops.
+  const hinted = new URLSearchParams(location.search).get('hubname');
+  if (!Array.isArray(hubs) || hubs.length === 0) {
+    hubs = [{ id: 'this', name: hinted || 'This hub', url: location.origin }];
+    saveHubs(hubs);
+  } else if (hinted) {
+    const mine = hubs.find((h) => h.url === location.origin);
+    if (mine && mine.name === 'This hub') { mine.name = hinted; saveHubs(hubs); }
+  }
+  if (hinted) history.replaceState(null, '', location.pathname);
+  return hubs;
+}
+function saveHubs(list) { try { localStorage.setItem(HUBS_KEY, JSON.stringify(list)); } catch {} }
+
+let hubs = loadHubs();
+let activeId = (() => {
+  try { return localStorage.getItem(ACTIVE_KEY) || hubs[0].id; } catch { return hubs[0].id; }
+})();
+if (!hubs.some((h) => h.id === activeId)) activeId = hubs[0].id;
+
+function setActiveId(id) { activeId = id; try { localStorage.setItem(ACTIVE_KEY, id); } catch {} }
+function activeHub() { return hubs.find((h) => h.id === activeId) || hubs[0]; }
+function base() { return activeHub().url.replace(/\/$/, ''); }
+
+function renderHubSelect() {
+  const sel = el('hubSelect');
+  sel.innerHTML = '';
+  for (const h of hubs) {
+    const o = document.createElement('option');
+    o.value = h.id; o.textContent = h.name;
+    sel.appendChild(o);
+  }
+  sel.value = activeId;
+}
+renderHubSelect();
+
+el('hubSelect').onchange = () => {
+  setActiveId(el('hubSelect').value);
+  checkHub();
+};
+
+function openHubForm(hub) {
+  el('hubForm').hidden = false;
+  el('hubName').value = hub ? hub.name : '';
+  el('hubUrl').value = hub ? hub.url : '';
+  el('hubForm').dataset.editingId = hub ? hub.id : '';
+  el('hubDelete').hidden = !hub || hubs.length <= 1;
+  el('hubName').focus();
+}
+el('hubAdd').onclick = () => openHubForm(null);
+el('hubEdit').onclick = () => openHubForm(activeHub());
+el('hubCancel').onclick = () => { el('hubForm').hidden = true; };
+
+el('hubSave').onclick = () => {
+  const name = el('hubName').value.trim();
+  let url = el('hubUrl').value.trim().replace(/\/+$/, '');
+  if (!name || !url) return;
+  if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+
+  const editingId = el('hubForm').dataset.editingId;
+  if (editingId) {
+    const h = hubs.find((x) => x.id === editingId);
+    if (h) { h.name = name; h.url = url; }
+    setActiveId(editingId);
+  } else {
+    const id = 'h' + Date.now();
+    hubs.push({ id, name, url });
+    setActiveId(id);
+  }
+  saveHubs(hubs);
+  el('hubForm').hidden = true;
+  renderHubSelect();
+  checkHub();
+};
+
+el('hubDelete').onclick = () => {
+  const editingId = el('hubForm').dataset.editingId;
+  hubs = hubs.filter((h) => h.id !== editingId);
+  if (hubs.length === 0) hubs = [{ id: 'this', name: 'This hub', url: location.origin }];
+  saveHubs(hubs);
+  setActiveId(hubs[0].id);
+  el('hubForm').hidden = true;
+  renderHubSelect();
+  checkHub();
+};
+
+// --- Folder / tags, remembered per phone ------------------------------------
+for (const k of ['collection', 'tags']) {
+  try { el(k).value = localStorage.getItem('pap.' + k) || ''; } catch {}
+  el(k).addEventListener('change', () => { try { localStorage.setItem('pap.' + k, el(k).value); } catch {} });
+}
+
+// --- Talking to the active hub ----------------------------------------------
+async function checkHub() {
+  el('count').textContent = 'checking…';
+  try {
+    const h = await (await fetch(base() + '/v1/health')).json();
+    el('count').textContent = h.screenshots + ' in library';
+  } catch {
+    el('count').textContent = 'unreachable';
+  }
+}
+checkHub();
+
+// --- Auto-capture watcher, start/stop from the phone -------------------------
+// The watcher itself runs on the Mac (it needs adb); this just remote-controls it, so no
+// Mac-side terminal is needed once it's set up.
+let watcherPolling = null;
+
+function renderWatcher(d) {
+  const dot = el('wdot'), state = el('wstate'), sub = el('wsub'), btn = el('wbtn');
+  if (d.running) {
+    dot.className = 'dot on';
+    state.textContent = 'Auto-capture is on';
+    const last = d.log && d.log.length ? d.log[d.log.length - 1].line : '';
+    sub.textContent = last || 'Take screenshots the normal way — they land here automatically.';
+    btn.textContent = 'Stop';
+    btn.className = 'wbtn stop';
+  } else {
+    dot.className = 'dot';
+    state.textContent = 'Auto-capture is off';
+    sub.textContent = d.error ? ('Stopped: ' + d.error) : 'Take screenshots the normal way — they\'ll be picked up automatically.';
+    btn.textContent = 'Start';
+    btn.className = 'wbtn start';
+  }
+}
+
+async function pollWatcher() {
+  try {
+    const d = await (await fetch(base() + '/v1/watcher/status')).json();
+    renderWatcher(d);
+  } catch {
+    el('wsub').textContent = 'Hub unreachable';
+  }
+}
+
+el('wbtn').onclick = async () => {
+  const btn = el('wbtn');
+  btn.disabled = true;
+  try {
+    const running = btn.textContent === 'Stop';
+    const q = running ? '' : '?' + new URLSearchParams({
+      collection: el('collection').value.trim(), tags: el('tags').value.trim(),
+    });
+    const res = await fetch(base() + '/v1/watcher/' + (running ? 'stop' : 'start') + q, { method: 'POST' });
+    const d = await res.json();
+    if (!res.ok && d.error) el('wsub').textContent = 'Could not start: ' + d.error;
+  } catch (e) {
+    el('wsub').textContent = 'Failed: ' + e.message;
+  }
+  btn.disabled = false;
+  pollWatcher();
+};
+
+pollWatcher();
+watcherPolling = setInterval(pollWatcher, 3000);
+
+el('f').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  // Sequential: the hub dedupes against everything already stored, so a parallel burst
+  // could let two identical shots both pass the check.
+  for (const file of files) await send(file);
+  checkHub();
+});
+
+// Re-encode large screenshots as JPEG before sending: a full-res PNG can be 1-3MB, and
+// screenshots have none of the fine detail that would suffer from JPEG's lossy compression.
+// Below COMPRESS_ABOVE the original is sent as-is — a small file isn't worth the quality loss.
+const COMPRESS_ABOVE = 250 * 1024;
+const MAX_EDGE = 1600;
+const JPEG_QUALITY = 0.82;
+
+async function compress(file) {
+  if (!file.type.startsWith('image/') || file.size <= COMPRESS_ABOVE) {
+    return { blob: file, name: file.name, before: file.size, after: file.size };
+  }
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  const w = Math.round(bitmap.width * scale), h = Math.round(bitmap.height * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY));
+  // A failed re-encode (some mobile browsers refuse large canvases) falls back to the original
+  // rather than losing the screenshot.
+  if (!blob || blob.size >= file.size) return { blob: file, name: file.name, before: file.size, after: file.size };
+  const name = file.name.replace(/\.\w+$/, '') + '.jpg';
+  return { blob, name, before: file.size, after: blob.size };
+}
+
+async function send(file) {
+  const li = document.createElement('li');
+  const img = document.createElement('img');
+  img.src = URL.createObjectURL(file);
+  const n = document.createElement('span'); n.className = 'n'; n.textContent = file.name;
+  const s = document.createElement('span'); s.className = 's'; s.textContent = 'compressing…';
+  li.append(img, n, s);
+  el('log').prepend(li);
+
+  let packed;
+  try {
+    packed = await compress(file);
+  } catch {
+    packed = { blob: file, name: file.name, before: file.size, after: file.size };
+  }
+  s.textContent = 'sending…';
+
+  const q = new URLSearchParams({ name: packed.name, platform: 'android' });
+  if (el('collection').value.trim()) q.set('collection', el('collection').value.trim());
+  if (el('tags').value.trim()) q.set('tags', el('tags').value.trim());
+  if (file.lastModified) q.set('captured', String(file.lastModified));
+
+  try {
+    const res = await fetch(base() + '/v1/upload?' + q, {
+      method: 'POST',
+      headers: { 'Content-Type': packed.blob.type || 'image/jpeg' },
+      body: packed.blob,
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || ('HTTP ' + res.status));
+    const saved = packed.before > packed.after
+      ? `  (${Math.round(100 - packed.after / packed.before * 100)}% smaller)` : '';
+    if (j.duplicate) {
+      li.className = 'dup';
+      s.textContent = 'already have it';
+      n.title = 'matches ' + j.duplicateOf;
+    } else {
+      li.className = 'done';
+      s.textContent = 'sent' + saved;
+      if (navigator.vibrate) navigator.vibrate(12);
+    }
+  } catch (err) {
+    li.className = 'fail';
+    s.textContent = 'failed';
+    el('foot').textContent = 'Upload to "' + activeHub().name + '" failed: ' + err.message +
+      ' — is that hub running, and are you on the same Wi-Fi?';
+  }
+}
+</script>

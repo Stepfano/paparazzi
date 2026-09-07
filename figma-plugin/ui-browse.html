@@ -1,0 +1,196 @@
+<style>
+  :root { color-scheme: light dark; --line: rgba(128,128,128,.28); --dim: rgba(128,128,128,.9); --accent: #0b5fff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:11px/1.5 Inter,-apple-system,BlinkMacSystemFont,sans-serif; display:flex; flex-direction:column; height:100vh; }
+  header { padding:10px 12px; border-bottom:1px solid var(--line); flex:none; }
+  .row { display:flex; gap:6px; align-items:center; }
+  .row + .row { margin-top:6px; }
+  input, select { flex:1; min-width:0; padding:5px 7px; border:1px solid var(--line); border-radius:5px;
+                  background:transparent; color:inherit; font:inherit; }
+  button { padding:5px 9px; border:1px solid var(--line); border-radius:5px; background:transparent;
+           color:inherit; font:inherit; cursor:pointer; white-space:nowrap; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button:disabled { opacity:.45; cursor:default; }
+  .status { display:flex; align-items:center; gap:6px; color:var(--dim); }
+  .dot { width:7px; height:7px; border-radius:50%; background:#9ca3af; flex:none; }
+  .dot.live { background:#10b981; } .dot.bad { background:#ef4444; }
+  main { flex:1; display:flex; min-height:0; }
+  nav { width:132px; flex:none; border-right:1px solid var(--line); overflow-y:auto; padding:6px 0; }
+  nav div { padding:4px 8px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  nav div:hover { background:rgba(128,128,128,.12); }
+  nav div.sel { background:rgba(11,95,255,.16); color:var(--accent); font-weight:600; }
+  nav .count { color:var(--dim); font-weight:400; }
+  section { flex:1; overflow-y:auto; padding:8px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(78px,1fr)); gap:8px; }
+  figure { margin:0; cursor:pointer; }
+  figure img { width:100%; aspect-ratio:9/19.5; object-fit:cover; border:1px solid var(--line);
+               border-radius:4px; background:rgba(128,128,128,.12); display:block; }
+  figure:hover img { border-color:var(--accent); }
+  figure figcaption { font-size:9px; color:var(--dim); margin-top:3px; overflow:hidden;
+                      text-overflow:ellipsis; white-space:nowrap; }
+  .empty { color:var(--dim); padding:20px 8px; text-align:center; }
+  footer { flex:none; padding:8px 12px; border-top:1px solid var(--line); }
+</style>
+
+<header>
+  <div class="row">
+    <input id="host" value="http://localhost:8899" spellcheck="false">
+    <button id="reload">Refresh</button>
+  </div>
+  <div class="row">
+    <input id="q" placeholder="search step, app, tag…" spellcheck="false">
+    <select id="platform">
+      <option value="">all platforms</option>
+      <option value="android">android</option>
+      <option value="ios">ios</option>
+    </select>
+  </div>
+  <div class="row status"><span class="dot" id="dot"></span><span id="msg">connecting…</span></div>
+</header>
+
+<main>
+  <nav id="tree"></nav>
+  <section id="results"><div class="empty">loading…</div></section>
+</main>
+
+<footer class="row">
+  <button id="insertAll" class="primary" disabled>Insert all</button>
+  <button id="live">Follow: off</button>
+</footer>
+
+<script>
+let base = 'http://localhost:8899';
+let collection = '';
+let shots = [];
+let liveOn = false, liveTimer = null, cursor = '';
+const blobs = new Map();
+
+const el = (id) => document.getElementById(id);
+const state = (cls, text) => { el('dot').className = 'dot ' + cls; el('msg').textContent = text; };
+
+async function api(path) {
+  const res = await fetch(base + path);
+  if (!res.ok) throw new Error('hub returned ' + res.status);
+  return res.json();
+}
+
+// The plugin iframe is https and the hub is http://localhost. Fetching bytes and turning them
+// into blob URLs avoids relying on mixed-content rules for <img src="http://...">.
+async function imageUrl(id) {
+  if (blobs.has(id)) return blobs.get(id);
+  const res = await fetch(base + '/v1/image/' + id);
+  if (!res.ok) throw new Error('image ' + res.status);
+  const url = URL.createObjectURL(await res.blob());
+  blobs.set(id, url);
+  return url;
+}
+
+async function loadTree() {
+  const { collections } = await api('/v1/collections');
+  const tree = el('tree');
+  tree.innerHTML = '';
+  const add = (label, path, count, depth, sel) => {
+    const d = document.createElement('div');
+    d.style.paddingLeft = (8 + depth * 10) + 'px';
+    d.innerHTML = label + ' <span class="count">' + count + '</span>';
+    d.className = sel ? 'sel' : '';
+    d.onclick = () => { collection = path; loadShots(); };
+    tree.appendChild(d);
+  };
+  const total = collections.reduce((m, c) => c.depth === 0 ? m + c.count : m, 0);
+  add('All', '', total, 0, collection === '');
+  for (const c of collections) add(c.name, c.path, c.count, c.depth, collection === c.path);
+}
+
+async function loadShots() {
+  const params = new URLSearchParams();
+  if (collection) params.set('collection', collection);
+  if (el('q').value.trim()) params.set('q', el('q').value.trim());
+  if (el('platform').value) params.set('platform', el('platform').value);
+
+  const { screenshots } = await api('/v1/screenshots?' + params);
+  shots = screenshots;
+  el('insertAll').disabled = shots.length === 0;
+  el('insertAll').textContent = 'Insert all (' + shots.length + ')';
+  await loadTree();
+
+  const box = el('results');
+  if (shots.length === 0) { box.innerHTML = '<div class="empty">no matches</div>'; return; }
+  box.innerHTML = '<div class="grid"></div>';
+  const grid = box.firstChild;
+
+  for (const s of shots) {
+    const fig = document.createElement('figure');
+    const img = document.createElement('img');
+    const cap = document.createElement('figcaption');
+    cap.textContent = (s.order !== null ? String(s.order).padStart(2, '0') + ' ' : '') + (s.step || s.id.slice(-6));
+    fig.title = [s.collection, s.app, s.version, (s.tags || []).join(',')].filter(Boolean).join(' · ');
+    fig.onclick = () => insert([s], false);
+    fig.append(img, cap);
+    grid.appendChild(fig);
+    imageUrl(s.id).then((u) => { img.src = u; }).catch(() => { cap.textContent = '⚠ ' + cap.textContent; });
+  }
+  state('live', shots.length + ' of ' + (await api('/v1/health')).screenshots + ' shown');
+}
+
+async function insert(list, newRow) {
+  state('live', 'fetching ' + list.length + '…');
+  const items = [];
+  for (const s of list) {
+    try {
+      const res = await fetch(base + '/v1/image/' + s.id);
+      items.push({
+        id: s.id,
+        bytes: new Uint8Array(await res.arrayBuffer()),
+        name: (s.step || s.id) + (s.app ? ' — ' + s.app : ''),
+        label: (s.order !== null ? String(s.order).padStart(2, '0') + '  ' : '') + (s.step || s.id),
+      });
+    } catch (e) { state('bad', 'fetch failed: ' + e.message); return; }
+  }
+  parent.postMessage({ pluginMessage: { type: 'insert', items, newRow } }, '*');
+}
+
+onmessage = (e) => {
+  const m = e.data.pluginMessage;
+  if (!m) return;
+  if (m.type === 'insert-done') loadShots().catch(() => {});
+  if (m.type === 'error') state('bad', m.message);
+};
+
+async function pollLive() {
+  if (!liveOn) return;
+  try {
+    const d = await api('/v1/live?after=' + encodeURIComponent(cursor));
+    cursor = d.cursor;
+    if (d.count > 0) {
+      state('live', 'following — ' + d.count + ' new');
+      await insert(d.screenshots, true);
+    }
+  } catch (e) { state('bad', 'follow: ' + e.message); }
+  liveTimer = setTimeout(pollLive, 3000);
+}
+
+el('reload').onclick = () => { base = el('host').value.replace(/\/$/, ''); boot(); };
+el('q').oninput = () => { clearTimeout(window._d); window._d = setTimeout(() => loadShots().catch(err => state('bad', err.message)), 250); };
+el('platform').onchange = () => loadShots().catch((e) => state('bad', e.message));
+el('insertAll').onclick = () => insert(shots, true);
+el('live').onclick = async (ev) => {
+  liveOn = !liveOn;
+  ev.target.textContent = 'Follow: ' + (liveOn ? 'on' : 'off');
+  if (liveOn) { cursor = (await api('/v1/live?after=')).cursor; pollLive(); }
+  else { clearTimeout(liveTimer); state('live', 'follow off'); }
+};
+
+async function boot() {
+  try {
+    const h = await api('/v1/health');
+    state('live', h.screenshots + ' screenshots in the hub');
+    await loadShots();
+  } catch (e) {
+    state('bad', 'no hub — run: node bin/serve.js');
+    el('results').innerHTML = '<div class="empty">Hub not reachable at ' + base +
+      '<br><br>Start it with<br><code>node bin/serve.js</code></div>';
+  }
+}
+boot();
+</script>

@@ -1,0 +1,243 @@
+<style>
+  :root { color-scheme: light dark; --line: rgba(128,128,128,.28); --dim: rgba(128,128,128,.95);
+          --accent:#0b5fff; --ok:#10b981; --bad:#ef4444; --card: rgba(128,128,128,.08); }
+  * { box-sizing: border-box; }
+  body { margin:0; font:11px/1.5 Inter,-apple-system,BlinkMacSystemFont,sans-serif;
+         display:flex; flex-direction:column; height:100vh; }
+  header { padding:12px 14px; border-bottom:1px solid var(--line); flex:none; }
+  .row { display:flex; gap:6px; align-items:center; }
+  .row + .row { margin-top:8px; }
+  .qrRow { align-items:center; }
+  #qr { border-radius:6px; background:#fff; padding:4px; flex:none; display:none; }
+  .qrText { min-width:0; }
+  .qrTitle { font-weight:600; }
+  .qrUrl { color:var(--dim); font-size:10px; word-break:break-all; }
+  input { flex:1; min-width:0; padding:6px 8px; border:1px solid var(--line); border-radius:6px;
+          background:transparent; color:inherit; font:inherit; }
+  button { padding:6px 11px; border:1px solid var(--line); border-radius:6px; background:transparent;
+           color:inherit; font:inherit; cursor:pointer; white-space:nowrap; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  main { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+         padding:20px 14px; text-align:center; gap:10px; min-height:0; }
+  .pulse { width:54px; height:54px; border-radius:50%; background:var(--card);
+           display:flex; align-items:center; justify-content:center; font-size:22px; flex:none; }
+  .pulse.on { background:rgba(16,185,129,.16); animation:beat 2s ease-in-out infinite; }
+  @keyframes beat { 0%,100%{transform:scale(1)} 50%{transform:scale(1.09)} }
+  .big { font-size:15px; font-weight:600; }
+  .sub { color:var(--dim); max-width:260px; }
+  .n { font-size:30px; font-weight:600; font-variant-numeric:tabular-nums; line-height:1.1; }
+  .bad { color:var(--bad); }
+  section { flex:none; max-height:38%; overflow-y:auto; border-top:1px solid var(--line); padding:8px 14px; }
+  section:empty { display:none; }
+  .item { display:flex; align-items:center; gap:9px; padding:5px 0; }
+  .item img { width:30px; height:30px; object-fit:cover; border-radius:4px; background:var(--card); flex:none; }
+  .item .t { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item .w { color:var(--dim); font-size:10px; flex:none; }
+  .item button { padding:2px 6px; font-size:12px; line-height:1; flex:none;
+                  border-radius:4px; opacity:.7; }
+  .item button:hover { opacity:1; border-color:var(--accent); color:var(--accent); }
+  .item button:disabled { opacity:.35; cursor:default; }
+</style>
+
+<header>
+  <div class="row">
+    <input id="host" value="http://localhost:8899" spellcheck="false">
+    <button id="toggle" class="primary">Pause</button>
+  </div>
+  <div class="row qrRow">
+    <img id="qr" alt="" width="72" height="72">
+    <div class="qrText">
+      <div class="qrTitle">Scan to send screenshots here</div>
+      <div class="qrUrl" id="qrUrl">—</div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="pulse on" id="pulse">📸</div>
+  <div class="n" id="count">0</div>
+  <div class="big" id="state">Listening</div>
+  <div class="sub" id="hint">Take a screenshot on your phone — it lands here automatically.</div>
+</main>
+
+<section id="recent"></section>
+<script>
+let base = 'http://localhost:8899';
+let cursor = null;          // null until we learn where "now" is
+let listening = true;
+let timer = null;
+let placed = 0;
+let failures = 0;
+
+const el = (id) => document.getElementById(id);
+
+function ui(state, hint, bad) {
+  el('state').textContent = state;
+  el('hint').textContent = hint;
+  el('state').className = 'big' + (bad ? ' bad' : '');
+  el('pulse').className = 'pulse' + (listening && !bad ? ' on' : '');
+}
+
+async function api(path) {
+  const res = await fetch(base + path);
+  if (!res.ok) throw new Error('hub returned ' + res.status);
+  return res.json();
+}
+
+// Start from the newest id that already exists, so the backlog is never placed.
+async function markNow() {
+  const d = await api('/v1/live?after=');
+  cursor = d.cursor || '';
+  return d;
+}
+
+// isReinsert: placing something already in the recent list again (via its own ↻ button) is
+// not a new arrival — it must not gain a second row or bump the placed count, only actually
+// place the image on the canvas again.
+async function place(shots, { isReinsert = false } = {}) {
+  const items = [];
+  for (const s of shots) {
+    try {
+      const res = await fetch(base + '/v1/image/' + s.id);
+      if (!res.ok) throw new Error('image ' + res.status);
+      const blob = await res.blob();
+      items.push({
+        id: s.id,
+        bytes: new Uint8Array(await blob.arrayBuffer()),
+        // Layer name only — nothing is drawn onto the canvas as visible text.
+        name: (s.step || s.collection || s.id) + (s.app ? ' — ' + s.app : ''),
+        _thumb: URL.createObjectURL(blob),
+        _meta: s,
+      });
+    } catch (e) {
+      ui('Fetch failed', e.message, true);
+      return;
+    }
+  }
+  // newRow:false so a live session flows into one continuing strip rather than
+  // starting a fresh row for every single arrival.
+  parent.postMessage({ pluginMessage: { type: 'insert', items: items.map(
+    ({ id, bytes, name }) => ({ id, bytes, name })), newRow: false } }, '*');
+
+  if (!isReinsert) {
+    for (const it of items) addRecent(it);
+    placed += items.length;
+    el('count').textContent = placed;
+  }
+}
+
+function addRecent(it) {
+  const d = document.createElement('div');
+  d.className = 'item';
+  const img = document.createElement('img'); img.src = it._thumb;
+  const t = document.createElement('span'); t.className = 't';
+  t.textContent = it._meta.step || it._meta.id.slice(-8);
+  const w = document.createElement('span'); w.className = 'w';
+  w.textContent = it._meta.collection || '';
+
+  // Re-place just this one screenshot — useful when you deleted this specific image from the
+  // canvas and want it back, without touching anything else placed since. Re-fetches its bytes
+  // fresh rather than reusing the blob URL, so it still works after the tab that made the blob
+  // is long gone.
+  const btn = document.createElement('button');
+  btn.textContent = '↻';
+  btn.title = 'Insert this one again';
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try { await place([it._meta], { isReinsert: true }); } finally { btn.disabled = false; }
+  };
+
+  d.append(img, t, w, btn);
+  el('recent').prepend(d);
+  while (el('recent').children.length > 24) el('recent').lastChild.remove();
+}
+
+async function tick() {
+  if (!listening) return;
+  try {
+    if (cursor === null) await markNow();
+    const d = await api('/v1/live?after=' + encodeURIComponent(cursor));
+    cursor = d.cursor;
+    failures = 0;
+    if (!qrLoaded) await loadQr();
+    if (d.count > 0) {
+      ui('Placing ' + d.count + '…', 'Adding to the canvas', false);
+      await place(d.screenshots);
+    }
+    if (listening) ui('Listening', placed
+      ? 'Waiting for the next screenshot.'
+      : 'Take a screenshot on your phone — it lands here automatically.', false);
+  } catch (e) {
+    // Back off the message, not the polling: the hub is often just restarting.
+    if (++failures > 2) {
+      ui('No hub', 'Start it with:  node bin/serve.js', true);
+      cursor = null;   // re-baseline once it returns, so a restart never dumps the backlog
+    }
+  }
+  timer = setTimeout(tick, 2000);
+}
+
+el('toggle').onclick = (e) => {
+  listening = !listening;
+  e.target.textContent = listening ? 'Pause' : 'Listen';
+  if (listening) { ui('Listening', 'Waiting for the next screenshot.', false); tick(); }
+  else { clearTimeout(timer); ui('Paused', 'Not watching for new screenshots.', false); }
+};
+
+el('host').onchange = () => {
+  base = el('host').value.replace(/\/$/, '');
+  cursor = null;            // a different hub means a different baseline
+  clearTimeout(timer);
+  // Persist this person's own host/port so reopening the plugin does not reset to the default.
+  parent.postMessage({ pluginMessage: { type: 'save-host', host: base } }, '*');
+  loadQr();
+  if (listening) tick();
+};
+
+// The sandbox reports whichever host this user last configured (figma.clientStorage), so a
+// non-default port survives closing and reopening the plugin. A short timeout covers running
+// this file outside real Figma (e.g. the /dev/ui test harness), where no such message ever
+// arrives and the HTML's baked-in default is used instead.
+let resolveInit;
+const initDone = new Promise((res) => { resolveInit = res; });
+onmessage = (e) => {
+  const m = e.data.pluginMessage;
+  if (!m) return;
+  if (m.type === 'init') {
+    if (m.savedHost) { el('host').value = m.savedHost; base = m.savedHost; }
+    resolveInit();
+  }
+};
+setTimeout(resolveInit, 200);
+
+let qrLoaded = false;
+async function loadQr() {
+  try {
+    const lan = await api('/v1/lan');
+    el('qr').src = base + '/v1/qrcode?_=' + Date.now();
+    el('qr').style.display = 'block';
+    el('qrUrl').textContent = lan.name + '  ·  ' + lan.url;
+    qrLoaded = true;
+  } catch {
+    el('qr').style.display = 'none';
+    el('qrUrl').textContent = 'unavailable — hub not reachable';
+    qrLoaded = false;
+  }
+}
+
+(async () => {
+  await initDone;
+  try {
+    const h = await api('/v1/health');
+    await markNow();
+    ui('Listening', 'Take a screenshot on your phone — it lands here automatically.', false);
+  } catch {
+    ui('No hub', 'Start it with:  node bin/serve.js', true);
+  }
+  // Always attempted, whether or not the health check above succeeded — otherwise a hub that
+  // is down when the panel opens leaves the QR row stuck on its static HTML placeholder forever,
+  // even after the hub comes back, since nothing else ever calls this again.
+  await loadQr();
+  tick();
+})();
+</script>
