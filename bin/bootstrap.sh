@@ -9,7 +9,7 @@
 # own working copy of the tool, not a copy of anyone else's captured screenshots.
 
 set -eu
-REPO_URL="${PAPARAZZI_REPO:-https://github.com/CHANGE-ME/paparazzi.git}"
+REPO_URL="${PAPARAZZI_REPO:-https://github.com/Stepfano/paparazzi.git}"
 TARGET="${PAPARAZZI_DIR:-$HOME/paparazzi}"
 
 if [ -d "$TARGET/.git" ]; then
