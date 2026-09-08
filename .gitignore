@@ -9,6 +9,7 @@ library/
 .launchd.out.log
 .launchd.err.log
 .reconcile.lock
+.watch.lock
 
 # macOS
 .DS_Store
