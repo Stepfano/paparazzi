@@ -25,6 +25,28 @@ const THRESHOLD = Number(process.env.HUB_THRESHOLD || 0.85);
 const config = require('../lib/config');
 const DEDUPE_ENABLED = config.read().dedupe_enabled !== false;
 const PHONE_DIRS = ['/sdcard/Pictures/Screenshots', '/sdcard/DCIM/Screenshots'];
+const WATCH_LOCK = path.join(__dirname, '..', '.watch.lock');
+
+// Two watchers on the same phone folders each keep their own in-memory `seen` set, so neither
+// knows the other already ingested a file — every screenshot lands in the library twice. Only
+// one may run at a time.
+function acquireWatchLock() {
+  if (fs.existsSync(WATCH_LOCK)) {
+    const pid = Number(fs.readFileSync(WATCH_LOCK, 'utf8').trim());
+    const alive = pid && (() => { try { process.kill(pid, 0); return true; } catch { return false; } })();
+    if (alive) {
+      console.error(`another watcher is already running (pid ${pid}) — stop it first, or if it ` +
+                     `crashed without cleaning up, remove ${WATCH_LOCK}`);
+      process.exit(1);
+    }
+  }
+  fs.writeFileSync(WATCH_LOCK, String(process.pid));
+}
+
+function releaseWatchLock() {
+  try { if (Number(fs.readFileSync(WATCH_LOCK, 'utf8').trim()) === process.pid) fs.unlinkSync(WATCH_LOCK); }
+  catch {}
+}
 
 function parseArgs(argv) {
   const o = { collection: 'inbox', tags: [], step: '', app: '', version: '', serial: null,
@@ -139,6 +161,7 @@ function foreground(serial) {
 
 (async () => {
   const o = parseArgs(process.argv.slice(2));
+  if (o.watch) acquireWatchLock();
   const serial = pickDevice(o.serial);
   const model = adb(['shell', 'getprop', 'ro.product.model'], serial, { allowFail: true }).trim();
   const osVer = adb(['shell', 'getprop', 'ro.build.version.release'], serial, { allowFail: true }).trim();
@@ -208,7 +231,7 @@ function foreground(serial) {
     };
     await tick();
     const timer = setInterval(() => tick().catch((e) => console.log('! ' + e.message)), o.interval * 1000);
-    const bye = () => { clearInterval(timer); store.writeSnapshot(known);
+    const bye = () => { clearInterval(timer); store.writeSnapshot(known); releaseWatchLock();
                         console.log(`\nstopped — ${stored} captured this session`); process.exit(0); };
     process.on('SIGINT', bye); process.on('SIGTERM', bye);
     return;

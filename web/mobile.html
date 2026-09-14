@@ -109,6 +109,16 @@
   </div>
 </div>
 
+<div class="watcher">
+  <div class="row">
+    <div>
+      <div class="label"><span class="dot" id="idot"></span><span id="istate">Raw copy off</span></div>
+      <div class="sub" id="isub">Plain copy to Downloads/Paparazzi/Inbox — no library, no dedupe.</div>
+    </div>
+    <button class="wbtn start" id="ibtn">Start</button>
+  </div>
+</div>
+
 <ul id="log"></ul>
 <footer id="foot">
   Pick which laptop's hub to send to above — it's remembered on this phone.<br>
@@ -285,6 +295,54 @@ el('wbtn').onclick = async () => {
 
 pollWatcher();
 watcherPolling = setInterval(pollWatcher, 3000);
+
+// --- Raw inbox watcher: plain copy to Downloads/Paparazzi/Inbox, no library involved ---------
+let inboxPolling = null;
+
+function renderInbox(d) {
+  const dot = el('idot'), state = el('istate'), sub = el('isub'), btn = el('ibtn');
+  if (d.running) {
+    dot.className = 'dot on';
+    state.textContent = 'Raw copy is on';
+    const last = d.log && d.log.length ? d.log[d.log.length - 1].line : '';
+    sub.textContent = last || 'Copying new phone screenshots straight to Downloads/Paparazzi/Inbox.';
+    btn.textContent = 'Stop';
+    btn.className = 'wbtn stop';
+  } else {
+    dot.className = 'dot';
+    state.textContent = 'Raw copy is off';
+    sub.textContent = d.error ? ('Stopped: ' + d.error) : 'Plain copy to Downloads/Paparazzi/Inbox — no library, no dedupe.';
+    btn.textContent = 'Start';
+    btn.className = 'wbtn start';
+  }
+}
+
+async function pollInbox() {
+  try {
+    const d = await (await fetch(base() + '/v1/inbox-watcher/status')).json();
+    renderInbox(d);
+  } catch {
+    el('isub').textContent = 'Hub unreachable';
+  }
+}
+
+el('ibtn').onclick = async () => {
+  const btn = el('ibtn');
+  btn.disabled = true;
+  try {
+    const running = btn.textContent === 'Stop';
+    const res = await fetch(base() + '/v1/inbox-watcher/' + (running ? 'stop' : 'start'), { method: 'POST' });
+    const d = await res.json();
+    if (!res.ok && d.error) el('isub').textContent = 'Could not start: ' + d.error;
+  } catch (e) {
+    el('isub').textContent = 'Failed: ' + e.message;
+  }
+  btn.disabled = false;
+  pollInbox();
+};
+
+pollInbox();
+inboxPolling = setInterval(pollInbox, 3000);
 
 el('f').addEventListener('change', async (e) => {
   const files = [...e.target.files];
