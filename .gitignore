@@ -10,6 +10,7 @@ library/
 .launchd.err.log
 .reconcile.lock
 .watch.lock
+.inbox-watch.lock
 
 # macOS
 .DS_Store

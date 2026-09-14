@@ -91,6 +91,37 @@ function stopWatcher() {
   return { ok: true };
 }
 
+// Raw phone -> Downloads/Paparazzi/Inbox (bin/inbox-watch.js), no dedupe or library involved.
+// Managed the same way as `watcher` above, as its own child process.
+let inboxWatcher = { proc: null, startedAt: null, log: [], error: null };
+const INBOX_LOG_MAX = 40;
+
+function inboxLog(line) {
+  inboxWatcher.log.push({ t: Date.now(), line });
+  if (inboxWatcher.log.length > INBOX_LOG_MAX) inboxWatcher.log.shift();
+}
+
+function startInboxWatcher() {
+  if (inboxWatcher.proc) return { ok: false, error: 'already running' };
+  const child = spawn('node', ['bin/inbox-watch.js'], { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'pipe'] });
+  inboxWatcher = { proc: child, startedAt: Date.now(), log: [], error: null };
+
+  const onOut = (buf) => { for (const l of buf.toString().split('\n')) if (l.trim()) inboxLog(l.trim()); };
+  child.stdout.on('data', onOut);
+  child.stderr.on('data', onOut);
+  child.on('exit', (code) => {
+    if (code !== 0 && code !== null) inboxWatcher.error = `exited with code ${code}`;
+    inboxWatcher.proc = null;
+  });
+  return { ok: true, pid: child.pid };
+}
+
+function stopInboxWatcher() {
+  if (!inboxWatcher.proc) return { ok: false, error: 'not running' };
+  inboxWatcher.proc.kill('SIGINT');
+  return { ok: true };
+}
+
 function rows({ force = false } = {}) {
   if (!force && Date.now() - indexCache.at < INDEX_TTL_MS) return indexCache.rows;
   const all = search({});
@@ -270,6 +301,27 @@ const server = http.createServer(async (req, res) => {
       return json(res, r.ok ? 200 : 409, r);
     }
 
+    if (p === '/v1/inbox-watcher/status') {
+      return json(res, 200, {
+        running: !!inboxWatcher.proc,
+        pid: inboxWatcher.proc ? inboxWatcher.proc.pid : null,
+        startedAt: inboxWatcher.startedAt,
+        dest: path.join(os.homedir(), 'Downloads', 'Paparazzi', 'Inbox'),
+        error: inboxWatcher.error,
+        log: inboxWatcher.log.slice(-10),
+      });
+    }
+
+    if (req.method === 'POST' && p === '/v1/inbox-watcher/start') {
+      const r = startInboxWatcher();
+      return json(res, r.ok ? 200 : 409, r);
+    }
+
+    if (req.method === 'POST' && p === '/v1/inbox-watcher/stop') {
+      const r = stopInboxWatcher();
+      return json(res, r.ok ? 200 : 409, r);
+    }
+
     // What a phone should point at to reach THIS hub, and a friendly label for it — used to
     // build the QR code and to let a scanning phone label the entry sensibly instead of a
     // generic "This hub" for every laptop it has ever scanned.
@@ -353,7 +405,8 @@ const server = http.createServer(async (req, res) => {
     return json(res, 404, { error: 'not found', endpoints: [
       '/v1/health', '/v1/lan', '/v1/qrcode', '/v1/collections', '/v1/screenshots',
       '/v1/image/:id', '/v1/live', 'POST /v1/upload',
-      '/v1/watcher/status', 'POST /v1/watcher/start', 'POST /v1/watcher/stop'] });
+      '/v1/watcher/status', 'POST /v1/watcher/start', 'POST /v1/watcher/stop',
+      '/v1/inbox-watcher/status', 'POST /v1/inbox-watcher/start', 'POST /v1/inbox-watcher/stop'] });
   } catch (e) {
     return json(res, 500, { error: e.message, missingScopes: e.missingScopes || undefined });
   }
