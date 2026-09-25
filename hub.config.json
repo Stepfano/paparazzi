@@ -1,7 +1,8 @@
 {
   "dedupe_threshold": 0.85,
-  "note": "storage: 'local' keeps everything on this Mac. Switch to 'lark' to use the Lark Drive backend again (folder_token/folder_url would need restoring). last_known_count is the shrink guard's baseline. dedupe_enabled: false disables the similarity checker entirely \u2014 everything is stored as new.",
-  "last_known_count": 0,
+  "note": "storage: 'local' keeps everything on this Mac. Switch to 'lark' to use the Lark Drive backend again (folder_token/folder_url would need restoring). last_known_count is the shrink guard's baseline. dedupe_enabled: false disables the similarity checker entirely — everything is stored as new.",
+  "last_known_count": 25,
   "storage": "local",
-  "dedupe_enabled": false
+  "dedupe_enabled": false,
+  "inbox_dir": "/Users/stepfano/Downloads/Trademark/Inbox"
 }

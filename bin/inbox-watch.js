@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 'use strict';
-// Raw phone -> Downloads/Paparazzi/Inbox. No dedupe, no filename encoding, no library index —
-// just the new screenshot, as-is, so it's ready to drag straight into Figma or anywhere else.
+// Raw phone -> a plain local folder (default: Downloads/Paparazzi/Inbox). No dedupe, no
+// filename encoding, no library index — just the new screenshot, as-is, so it's ready to drag
+// straight into Figma or anywhere else.
 //
-//   node bin/inbox-watch.js                keep watching for new phone screenshots
-//   node bin/inbox-watch.js --backfill     also pull whatever is already on the phone
-//   node bin/inbox-watch.js --interval 2   poll every 2s instead of the 1s default
+// The destination is configurable, not just the historical default, because it lives outside
+// the project (Downloads) and gets renamed by hand as work is organized (e.g. to Trademark/) —
+// a hardcoded path would silently recreate an empty folder at the old name after a rename.
+//
+//   node bin/inbox-watch.js                       keep watching for new phone screenshots
+//   node bin/inbox-watch.js --dest ~/Downloads/Trademark/Inbox
+//   HUB_INBOX_DIR=~/Downloads/Trademark/Inbox node bin/inbox-watch.js
+//   node bin/inbox-watch.js --backfill            also pull whatever is already on the phone
+//   node bin/inbox-watch.js --interval 2          poll every 2s instead of the 1s default
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -13,7 +20,7 @@ const os = require('os');
 const path = require('path');
 
 const PHONE_DIRS = ['/sdcard/Pictures/Screenshots', '/sdcard/DCIM/Screenshots'];
-const DEST_DIR = path.join(os.homedir(), 'Downloads', 'Paparazzi', 'Inbox');
+const DEFAULT_DEST_DIR = path.join(os.homedir(), 'Downloads', 'Paparazzi', 'Inbox');
 const LOCK = path.join(__dirname, '..', '.inbox-watch.lock');
 
 function acquireLock() {
@@ -34,12 +41,14 @@ function releaseLock() {
 }
 
 function parseArgs(argv) {
-  const o = { interval: 1, backfill: false, serial: null };
+  const o = { interval: 1, backfill: false, serial: null,
+              dest: process.env.HUB_INBOX_DIR || DEFAULT_DEST_DIR };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--interval') o.interval = Math.max(1, Number(argv[++i]) || 1);
     else if (a === '--backfill') o.backfill = true;
     else if (a === '--serial') o.serial = argv[++i];
+    else if (a === '--dest') o.dest = argv[++i].replace(/^~/, os.homedir());
   }
   return o;
 }
@@ -74,11 +83,11 @@ function pickDevice(preferred) {
 (async () => {
   const o = parseArgs(process.argv.slice(2));
   acquireLock();
-  fs.mkdirSync(DEST_DIR, { recursive: true });
+  fs.mkdirSync(o.dest, { recursive: true });
 
   const serial = pickDevice(o.serial);
   console.log(`device: ${serial}`);
-  console.log(`destination: ${DEST_DIR}`);
+  console.log(`destination: ${o.dest}`);
 
   const dirs = PHONE_DIRS.filter((d) =>
     adb(['shell', `ls -1 "${d}" 2>/dev/null | head -1`], serial, { allowFail: true }).trim());
@@ -99,7 +108,7 @@ function pickDevice(preferred) {
       const key = `${d}/${name}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const dest = path.join(DEST_DIR, name);
+      const dest = path.join(o.dest, name);
       if (fs.existsSync(dest)) continue;   // already pulled by a previous run
       try {
         adb(['pull', '-a', key, dest]);

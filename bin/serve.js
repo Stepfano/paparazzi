@@ -92,19 +92,29 @@ function stopWatcher() {
 }
 
 // Raw phone -> Downloads/Paparazzi/Inbox (bin/inbox-watch.js), no dedupe or library involved.
-// Managed the same way as `watcher` above, as its own child process.
-let inboxWatcher = { proc: null, startedAt: null, log: [], error: null };
+// Managed the same way as `watcher` above, as its own child process. The destination lives
+// outside the project (Downloads) and gets renamed by hand as work is organized (e.g.
+// Paparazzi -> Trademark) — so it's read from hub.config.json, not hardcoded, and a start
+// call can update it, so a rename only needs telling once instead of silently splitting a
+// stale folder back into existence at the old name.
+let inboxWatcher = { proc: null, startedAt: null, dest: null, log: [], error: null };
 const INBOX_LOG_MAX = 40;
+const DEFAULT_INBOX_DIR = path.join(os.homedir(), 'Downloads', 'Paparazzi', 'Inbox');
+
+function inboxDir() { return config.read().inbox_dir || DEFAULT_INBOX_DIR; }
 
 function inboxLog(line) {
   inboxWatcher.log.push({ t: Date.now(), line });
   if (inboxWatcher.log.length > INBOX_LOG_MAX) inboxWatcher.log.shift();
 }
 
-function startInboxWatcher() {
+function startInboxWatcher(dest) {
   if (inboxWatcher.proc) return { ok: false, error: 'already running' };
-  const child = spawn('node', ['bin/inbox-watch.js'], { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'pipe'] });
-  inboxWatcher = { proc: child, startedAt: Date.now(), log: [], error: null };
+  const resolvedDest = dest || inboxDir();
+  if (dest) config.write({ inbox_dir: dest });
+  const child = spawn('node', ['bin/inbox-watch.js', '--dest', resolvedDest],
+                       { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'pipe', 'pipe'] });
+  inboxWatcher = { proc: child, startedAt: Date.now(), dest: resolvedDest, log: [], error: null };
 
   const onOut = (buf) => { for (const l of buf.toString().split('\n')) if (l.trim()) inboxLog(l.trim()); };
   child.stdout.on('data', onOut);
@@ -306,14 +316,15 @@ const server = http.createServer(async (req, res) => {
         running: !!inboxWatcher.proc,
         pid: inboxWatcher.proc ? inboxWatcher.proc.pid : null,
         startedAt: inboxWatcher.startedAt,
-        dest: path.join(os.homedir(), 'Downloads', 'Paparazzi', 'Inbox'),
+        dest: inboxWatcher.dest || inboxDir(),
         error: inboxWatcher.error,
         log: inboxWatcher.log.slice(-10),
       });
     }
 
     if (req.method === 'POST' && p === '/v1/inbox-watcher/start') {
-      const r = startInboxWatcher();
+      const dest = url.searchParams.get('dest') || '';
+      const r = startInboxWatcher(dest ? dest.replace(/^~/, os.homedir()) : null);
       return json(res, r.ok ? 200 : 409, r);
     }
 
